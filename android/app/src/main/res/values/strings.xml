@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">workout_tracker</string>
+    <string name="rest_channel_name">Rest timer</string>
+    <string name="rest_channel_description">Countdown of the rest time between sets</string>
+    <string name="rest_finished_channel_name">Rest finished</string>
+    <string name="rest_finished_channel_description">Alert when the rest time is over</string>
 </resources>
