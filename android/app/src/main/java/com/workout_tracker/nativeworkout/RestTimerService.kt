@@ -12,11 +12,6 @@ import android.os.Build
 
 class RestTimerService : Service() {
 
-    override fun onCreate() {
-        super.onCreate()
-        isRunning = true
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> handleStart(intent)
@@ -27,11 +22,6 @@ class RestTimerService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        isRunning = false
-        super.onDestroy()
-    }
 
     private fun handleStart(intent: Intent) {
         val endsAtMs = intent.getLongExtra(EXTRA_ENDS_AT_MS, 0L)
@@ -102,9 +92,5 @@ class RestTimerService : Service() {
         const val EXTRA_ONGOING_TEXT = "ongoingText"
 
         const val NOTIFICATION_ID = 1
-
-        @Volatile
-        var isRunning = false
-            private set
     }
 }

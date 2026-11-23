@@ -14,6 +14,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 
 class NativeWorkoutModule(reactContext: ReactApplicationContext) :
@@ -71,10 +72,34 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     }
 
     override fun startRestTimer(options: ReadableMap, promise: Promise) {
-        promise.reject(E_NOT_IMPLEMENTED, "startRestTimer is not implemented yet")
+        try {
+            val context = reactApplicationContext
+            val ongoingText =
+                if (options.hasKey(KEY_ONGOING_TEXT)) options.getString(KEY_ONGOING_TEXT) else null
+
+            val intent = Intent(context, RestTimerService::class.java)
+                .setAction(RestTimerService.ACTION_START)
+                .putExtra(RestTimerService.EXTRA_ENDS_AT_MS, options.getDouble(KEY_ENDS_AT_MS).toLong())
+                .putExtra(RestTimerService.EXTRA_ONGOING_TITLE, options.getString(KEY_ONGOING_TITLE))
+                .putExtra(RestTimerService.EXTRA_ONGOING_TEXT, ongoingText)
+
+            ContextCompat.startForegroundService(context, intent)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject(E_START_FAILED, e.message ?: "Cannot start rest timer", e)
+        }
     }
 
     override fun cancelRestTimer() {
+        val context = reactApplicationContext
+        val intent = Intent(context, RestTimerService::class.java)
+            .setAction(RestTimerService.ACTION_CANCEL)
+
+        try {
+            context.startService(intent)
+        } catch (e: RuntimeException) {
+            Log.w(NativeWorkoutSpec.NAME, "Cannot cancel rest timer", e)
+        }
     }
 
     private fun getVibrator(): Vibrator? {
@@ -107,6 +132,11 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
         const val MAX_REST_DURATION_MS = 60 * 60 * 1000L
         const val MIN_REST_DURATION_MS = 1000L
         private const val VIBRATE_DURATION_MS = 200L
-        private const val E_NOT_IMPLEMENTED = "E_NOT_IMPLEMENTED"
+
+        private const val KEY_ENDS_AT_MS = "endsAtMs"
+        private const val KEY_ONGOING_TITLE = "ongoingTitle"
+        private const val KEY_ONGOING_TEXT = "ongoingText"
+
+        private const val E_START_FAILED = "E_START_FAILED"
     }
 }
