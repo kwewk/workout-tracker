@@ -8,14 +8,14 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import androidx.annotation.RequiresApi
 import com.workout_tracker.NativeWorkoutSpec
 
 object Haptics {
 
     private const val TAP_DURATION_MS = 200L
-
-    // Waveform timings in ms: wait, vibrate, pause, vibrate, pause, vibrate.
-    private val FINISH_PATTERN = longArrayOf(0L, 400L, 200L, 400L, 200L, 400L)
+    private val FINISH_TIMINGS = longArrayOf(0L, 400L, 200L, 400L, 200L, 400L)
+    private val FINISH_AMPLITUDES = intArrayOf(0, 255, 0, 255, 0, 255)
     private const val NO_REPEAT = -1
 
     fun vibrateTap(context: Context) {
@@ -38,7 +38,7 @@ object Haptics {
             when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
                     vibrator.vibrate(
-                        VibrationEffect.createWaveform(FINISH_PATTERN, NO_REPEAT),
+                        finishEffect(),
                         VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM),
                     )
                 }
@@ -46,20 +46,24 @@ object Haptics {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
                     @Suppress("DEPRECATION")
                     vibrator.vibrate(
-                        VibrationEffect.createWaveform(FINISH_PATTERN, NO_REPEAT),
+                        finishEffect(),
                         alarmAudioAttributes(),
                     )
                 }
 
                 else -> {
                     @Suppress("DEPRECATION")
-                    vibrator.vibrate(FINISH_PATTERN, NO_REPEAT, alarmAudioAttributes())
+                    vibrator.vibrate(FINISH_TIMINGS, NO_REPEAT, alarmAudioAttributes())
                 }
             }
         } catch (e: RuntimeException) {
             Log.w(NativeWorkoutSpec.NAME, "Cannot vibrate at rest finish", e)
         }
     }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun finishEffect(): VibrationEffect =
+        VibrationEffect.createWaveform(FINISH_TIMINGS, FINISH_AMPLITUDES, NO_REPEAT)
 
     private fun alarmAudioAttributes(): AudioAttributes =
         AudioAttributes.Builder()
