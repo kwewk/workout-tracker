@@ -1,15 +1,16 @@
 package com.workout_tracker.nativeworkout
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.ReadableType
 import com.workout_tracker.NativeWorkoutSpec
 
 class NativeWorkoutModule(reactContext: ReactApplicationContext) :
@@ -54,27 +55,62 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     }
 
     override fun startRestTimer(options: ReadableMap, promise: Promise) {
+        val endsAtRaw = readEndsAtMs(options)
+            ?: return promise.reject(E_INVALID_ARGS, "$KEY_ENDS_AT_MS must be a finite number")
+        val ongoingTitle = readRequiredString(options, KEY_ONGOING_TITLE)
+            ?: return promise.reject(E_INVALID_ARGS, "$KEY_ONGOING_TITLE must be a non-blank string")
+        val finishedTitle = readRequiredString(options, KEY_FINISHED_TITLE)
+            ?: return promise.reject(E_INVALID_ARGS, "$KEY_FINISHED_TITLE must be a non-blank string")
+        val finishedBody = readRequiredString(options, KEY_FINISHED_BODY)
+            ?: return promise.reject(E_INVALID_ARGS, "$KEY_FINISHED_BODY must be a non-blank string")
+        if (!isOptionalString(options, KEY_ONGOING_TEXT)) {
+            return promise.reject(E_INVALID_ARGS, "$KEY_ONGOING_TEXT must be a string if provided")
+        }
+        val ongoingText = options.getString(KEY_ONGOING_TEXT)?.takeIf { it.isNotBlank() }
+
+        // Compare the raw double with now + limit: no overflow and no cut-off fraction.
+        val nowMs = System.currentTimeMillis()
+        if (endsAtRaw < nowMs + MIN_REST_DURATION_MS) {
+            return promise.reject(
+                E_ALREADY_FINISHED,
+                "Less than $MIN_REST_DURATION_MS ms of rest is left"
+            )
+        }
+        if (endsAtRaw > nowMs + MAX_REST_DURATION_MS) {
+            return promise.reject(E_TOO_LONG, "Rest must not be longer than $MAX_REST_DURATION_MS ms")
+        }
+        val endsAtMs = endsAtRaw.toLong()
+
+        val context = reactApplicationContext
+        val intent = Intent(context, RestTimerService::class.java)
+            .setAction(RestTimerService.ACTION_START)
+            .putExtra(RestTimerService.EXTRA_ENDS_AT_MS, endsAtMs)
+            .putExtra(RestTimerService.EXTRA_ONGOING_TITLE, ongoingTitle)
+            .putExtra(RestTimerService.EXTRA_ONGOING_TEXT, ongoingText)
+            .putExtra(RestTimerService.EXTRA_FINISHED_TITLE, finishedTitle)
+            .putExtra(RestTimerService.EXTRA_FINISHED_BODY, finishedBody)
+
         try {
-            val context = reactApplicationContext
-            val endsAtMs = options.getDouble(KEY_ENDS_AT_MS).toLong()
-            val ongoingText =
-                if (options.hasKey(KEY_ONGOING_TEXT)) options.getString(KEY_ONGOING_TEXT) else null
-
-            val intent = Intent(context, RestTimerService::class.java)
-                .setAction(RestTimerService.ACTION_START)
-                .putExtra(RestTimerService.EXTRA_ENDS_AT_MS, endsAtMs)
-                .putExtra(RestTimerService.EXTRA_ONGOING_TITLE, options.getString(KEY_ONGOING_TITLE))
-                .putExtra(RestTimerService.EXTRA_ONGOING_TEXT, ongoingText)
-                .putExtra(
-                    RestTimerService.EXTRA_FINISHED_TITLE,
-                    options.getString(KEY_FINISHED_TITLE)
-                )
-                .putExtra(RestTimerService.EXTRA_FINISHED_BODY, options.getString(KEY_FINISHED_BODY))
-
-            ContextCompat.startForegroundService(context, intent)
-            promise.resolve(null)
+            val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            if (started == null) {
+                promise.reject(E_START_NOT_ALLOWED, "The system refused to start the rest timer")
+            } else {
+                promise.resolve(null)
+            }
         } catch (e: Exception) {
-            promise.reject(E_START_FAILED, e.message ?: "Cannot start rest timer", e)
+            if (isStartNotAllowed(e)) {
+                promise.reject(
+                    E_START_NOT_ALLOWED,
+                    "Cannot start rest timer while the app is in the background",
+                    e
+                )
+            } else {
+                promise.reject(E_START_FAILED, e.message ?: "Cannot start rest timer", e)
+            }
         }
     }
 
@@ -91,6 +127,32 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
             Log.w(NativeWorkoutSpec.NAME, "Cannot cancel rest timer", e)
         }
     }
+
+    /** Returns null when the value is missing, not a number, NaN or infinite. */
+    private fun readEndsAtMs(options: ReadableMap): Double? {
+        if (!options.hasKey(KEY_ENDS_AT_MS)) return null
+        // getDouble throws on null or a non-number, so check the type first.
+        if (options.getType(KEY_ENDS_AT_MS) != ReadableType.Number) return null
+        val value = options.getDouble(KEY_ENDS_AT_MS)
+        return value.takeIf { it.isFinite() }
+    }
+
+    /** Returns null when the value is missing, not a string or blank. */
+    private fun readRequiredString(options: ReadableMap, key: String): String? {
+        if (!options.hasKey(key) || options.getType(key) != ReadableType.String) return null
+        return options.getString(key)?.takeIf { it.isNotBlank() }
+    }
+
+    /** Missing or null is fine; any other non-string type is not. */
+    private fun isOptionalString(options: ReadableMap, key: String): Boolean {
+        if (!options.hasKey(key)) return true
+        val type = options.getType(key)
+        return type == ReadableType.Null || type == ReadableType.String
+    }
+
+    private fun isStartNotAllowed(e: Exception): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            e is ForegroundServiceStartNotAllowedException
 
     private fun appDetailsIntent(packageName: String): Intent =
         Intent(
@@ -117,6 +179,10 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
         private const val KEY_FINISHED_TITLE = "finishedTitle"
         private const val KEY_FINISHED_BODY = "finishedBody"
 
+        private const val E_INVALID_ARGS = "E_INVALID_ARGS"
+        private const val E_ALREADY_FINISHED = "E_ALREADY_FINISHED"
+        private const val E_TOO_LONG = "E_TOO_LONG"
+        private const val E_START_NOT_ALLOWED = "E_START_NOT_ALLOWED"
         private const val E_START_FAILED = "E_START_FAILED"
     }
 }

@@ -32,7 +32,7 @@ class RestTimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
         when (intent?.action) {
-            ACTION_START -> handleStart(intent)
+            ACTION_START -> handleStart(intent, startId)
             ACTION_CANCEL -> handleCancel(startId)
             else -> stopSelf(startId)
         }
@@ -47,21 +47,32 @@ class RestTimerService : Service() {
         super.onDestroy()
     }
 
-    private fun handleStart(intent: Intent) {
+    private fun handleStart(intent: Intent, startId: Int) {
         val endsAtMs = intent.getLongExtra(EXTRA_ENDS_AT_MS, 0L)
         val title = intent.getStringExtra(EXTRA_ONGOING_TITLE).orEmpty()
         val text = intent.getStringExtra(EXTRA_ONGOING_TEXT)
 
         val notification = buildOngoingNotification(endsAtMs, title, text)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: RuntimeException) {
+            // E.g. the system re-checked the background start rule when replacing a running
+            // timer. Drop the previous timer as well, so a failed replace does not leave the old
+            // finish scheduled. This prevents the crash only for errors thrown after Android
+            // cleared its "must call startForeground" flag; configuration errors (missing
+            // permission, wrong service type) still crash, which is fine: they are bugs.
+            Log.e(NativeWorkoutSpec.NAME, "Cannot start rest timer in foreground", e)
+            handleCancel(startId)
+            return
         }
 
         finishedTitle = intent.getStringExtra(EXTRA_FINISHED_TITLE).orEmpty()
