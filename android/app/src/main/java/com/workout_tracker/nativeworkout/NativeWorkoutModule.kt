@@ -1,20 +1,16 @@
 package com.workout_tracker.nativeworkout
 
-import android.os.Vibrator
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.util.Log
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
 import com.workout_tracker.NativeWorkoutSpec
-import android.content.Context
-import android.os.Build
-import android.os.VibratorManager
-import android.os.VibrationEffect
-import androidx.core.app.NotificationManagerCompat
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
-import android.util.Log
-
 
 class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     NativeWorkoutSpec(reactContext) {
@@ -27,20 +23,7 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     }
 
     override fun vibrate() {
-        val vibrator = getVibrator() ?: return
-        if (!vibrator.hasVibrator()) return
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(
-                VibrationEffect.createOneShot(
-                    VIBRATE_DURATION_MS,
-                    VibrationEffect.DEFAULT_AMPLITUDE
-                )
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(VIBRATE_DURATION_MS)
-        }
+        Haptics.vibrateTap(reactApplicationContext)
     }
 
     override fun hasNotificationPermission(promise: Promise) {
@@ -71,20 +54,41 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     }
 
     override fun startRestTimer(options: ReadableMap, promise: Promise) {
-        promise.reject(E_NOT_IMPLEMENTED, "startRestTimer is not implemented yet")
+        try {
+            val context = reactApplicationContext
+            val endsAtMs = options.getDouble(KEY_ENDS_AT_MS).toLong()
+            val ongoingText =
+                if (options.hasKey(KEY_ONGOING_TEXT)) options.getString(KEY_ONGOING_TEXT) else null
+
+            val intent = Intent(context, RestTimerService::class.java)
+                .setAction(RestTimerService.ACTION_START)
+                .putExtra(RestTimerService.EXTRA_ENDS_AT_MS, endsAtMs)
+                .putExtra(RestTimerService.EXTRA_ONGOING_TITLE, options.getString(KEY_ONGOING_TITLE))
+                .putExtra(RestTimerService.EXTRA_ONGOING_TEXT, ongoingText)
+                .putExtra(
+                    RestTimerService.EXTRA_FINISHED_TITLE,
+                    options.getString(KEY_FINISHED_TITLE)
+                )
+                .putExtra(RestTimerService.EXTRA_FINISHED_BODY, options.getString(KEY_FINISHED_BODY))
+
+            ContextCompat.startForegroundService(context, intent)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject(E_START_FAILED, e.message ?: "Cannot start rest timer", e)
+        }
     }
 
     override fun cancelRestTimer() {
-    }
+        val context = reactApplicationContext
+        NotificationManagerCompat.from(context).cancel(RestTimerService.FINISHED_NOTIFICATION_ID)
 
-    private fun getVibrator(): Vibrator? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = reactApplicationContext
-                .getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            manager?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            reactApplicationContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        val intent = Intent(context, RestTimerService::class.java)
+            .setAction(RestTimerService.ACTION_CANCEL)
+
+        try {
+            context.startService(intent)
+        } catch (e: RuntimeException) {
+            Log.w(NativeWorkoutSpec.NAME, "Cannot cancel rest timer", e)
         }
     }
 
@@ -106,7 +110,13 @@ class NativeWorkoutModule(reactContext: ReactApplicationContext) :
     companion object {
         const val MAX_REST_DURATION_MS = 60 * 60 * 1000L
         const val MIN_REST_DURATION_MS = 1000L
-        private const val VIBRATE_DURATION_MS = 200L
-        private const val E_NOT_IMPLEMENTED = "E_NOT_IMPLEMENTED"
+
+        private const val KEY_ENDS_AT_MS = "endsAtMs"
+        private const val KEY_ONGOING_TITLE = "ongoingTitle"
+        private const val KEY_ONGOING_TEXT = "ongoingText"
+        private const val KEY_FINISHED_TITLE = "finishedTitle"
+        private const val KEY_FINISHED_BODY = "finishedBody"
+
+        private const val E_START_FAILED = "E_START_FAILED"
     }
 }

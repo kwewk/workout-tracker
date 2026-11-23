@@ -31,6 +31,7 @@ object NotificationChannels {
         ).apply {
             description = context.getString(R.string.rest_finished_channel_description)
             enableVibration(false)
+            setSound(null, null)
         }
 
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
